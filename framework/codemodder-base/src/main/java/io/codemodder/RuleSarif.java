@@ -21,12 +21,12 @@ public interface RuleSarif {
   List<Region> getRegionsFromResultsByRule(Path path);
 
   /**
-   * Get all the SARIF results with the matching path
+   * Get all the SARIF results with the matching path for the first location field
    *
    * @param path the file being scanned
    * @return the results associated with the given file
    */
-  List<Result> getResultsByPath(Path path);
+  List<Result> getResultsByLocationPath(Path path);
 
   /** Return the entire SARIF as a model in case more comprehensive inspection is needed. */
   SarifSchema210 rawDocument();
@@ -41,12 +41,12 @@ public interface RuleSarif {
   final class EmptyRuleSarif implements RuleSarif {
 
     @Override
-    public List<Region> getRegionsFromResultsByRule(Path path) {
+    public List<Region> getRegionsFromResultsByRule(final Path path) {
       return List.of();
     }
 
     @Override
-    public List<Result> getResultsByPath(Path path) {
+    public List<Result> getResultsByLocationPath(final Path path) {
       return List.of();
     }
 

@@ -35,7 +35,7 @@ final class PmdModuleTest {
                     }
                     """);
 
-    PmdModule module = new PmdModule(tmpDir, List.of(UsesPmdCodemod.class));
+    PmdModule module = new PmdModule(tmpDir, List.of(javaFile), List.of(UsesPmdCodemod.class));
     Injector injector = Guice.createInjector(module);
     UsesPmdCodemod codemod = injector.getInstance(UsesPmdCodemod.class);
     RuleSarif ruleSarif = codemod.ruleSarif;
@@ -46,6 +46,7 @@ final class PmdModuleTest {
 
   @Codemod(
       id = "pmd-test:java/my-pmd-codemod",
+      importance = Importance.HIGH,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesPmdCodemod extends SarifPluginJavaParserChanger<VariableDeclarator> {
     private final RuleSarif ruleSarif;

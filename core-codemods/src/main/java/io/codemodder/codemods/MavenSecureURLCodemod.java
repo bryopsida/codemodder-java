@@ -26,7 +26,9 @@ import org.xml.sax.SAXException;
 /** Fixes issues reported under the id "java/maven/non-https-url". */
 @Codemod(
     id = "codeql:java/maven/non-https-url",
-    reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW)
+    reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW,
+    importance = Importance.MEDIUM,
+    executionPriority = CodemodExecutionPriority.HIGH)
 public final class MavenSecureURLCodemod extends SarifPluginRawFileChanger {
 
   private final XPathStreamProcessor processor;
@@ -43,14 +45,14 @@ public final class MavenSecureURLCodemod extends SarifPluginRawFileChanger {
   public List<CodemodChange> onFileFound(
       final CodemodInvocationContext context, final List<Result> results) {
     try {
-      return processXml(context, context.path());
+      return processXml(context.path());
     } catch (SAXException | DocumentException | IOException | XMLStreamException e) {
       LOG.error("Problem transforming xml file: {}", context.path());
       return List.of();
     }
   }
 
-  private List<CodemodChange> processXml(final CodemodInvocationContext context, final Path file)
+  private List<CodemodChange> processXml(final Path file)
       throws SAXException, IOException, DocumentException, XMLStreamException {
     Optional<XPathStreamProcessChange> change =
         processor.process(

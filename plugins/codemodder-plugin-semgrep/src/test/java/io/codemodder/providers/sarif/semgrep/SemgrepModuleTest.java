@@ -19,7 +19,6 @@ import java.nio.file.StandardOpenOption;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Stream;
 import javax.inject.Inject;
 import org.junit.jupiter.api.Test;
@@ -39,6 +38,7 @@ final class SemgrepModuleTest {
 
   @Codemod(
       id = "pixee-test:java/implicit-yaml",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesImplicitYamlPath implements CodeChanger {
     private final RuleSarif ruleSarif;
@@ -59,11 +59,6 @@ final class SemgrepModuleTest {
     }
 
     @Override
-    public Optional<String> getSourceControlUrl() {
-      return Optional.empty();
-    }
-
-    @Override
     public List<CodeTFReference> getReferences() {
       return null;
     }
@@ -76,6 +71,7 @@ final class SemgrepModuleTest {
 
   @Codemod(
       id = "pixee-test:java/explicit-yaml-test",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesExplicitYamlPath extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
 
@@ -88,7 +84,7 @@ final class SemgrepModuleTest {
       super(
           ruleSarif,
           ObjectCreationExpr.class,
-          RegionExtractor.FROM_FIRST_LOCATION,
+          SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION,
           RegionNodeMatcher.EXACT_MATCH,
           CodemodReporterStrategy.empty());
     }
@@ -105,6 +101,7 @@ final class SemgrepModuleTest {
 
   @Codemod(
       id = "pixee-test:java/missing-properties-test",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class MissingYamlPropertiesPath extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
 
@@ -122,7 +119,7 @@ final class SemgrepModuleTest {
       super(
           ruleSarif,
           ObjectCreationExpr.class,
-          RegionExtractor.FROM_FIRST_LOCATION,
+          SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION,
           RegionNodeMatcher.EXACT_MATCH,
           CodemodReporterStrategy.empty());
     }
@@ -139,6 +136,7 @@ final class SemgrepModuleTest {
 
   @Codemod(
       id = "pixee-test:java/uses-implicit-rule",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesImplicitRule extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
 
@@ -154,7 +152,7 @@ final class SemgrepModuleTest {
       super(
           ruleSarif,
           ObjectCreationExpr.class,
-          RegionExtractor.FROM_FIRST_LOCATION,
+          SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION,
           RegionNodeMatcher.EXACT_MATCH,
           CodemodReporterStrategy.empty());
     }
@@ -174,7 +172,7 @@ final class SemgrepModuleTest {
     String javaCode = "class Foo { \n Object a = new Thing(); \n }";
     Path javaFile = Files.createTempFile(tmpDir, "HasThing", ".java");
     Files.writeString(javaFile, javaCode, StandardOpenOption.TRUNCATE_EXISTING);
-    SemgrepModule module = new SemgrepModule(tmpDir, List.of(UsesImplicitYamlPath.class));
+    SemgrepModule module = createModule(tmpDir, List.of(UsesImplicitYamlPath.class));
     Injector injector = Guice.createInjector(module);
     UsesImplicitYamlPath instance = injector.getInstance(UsesImplicitYamlPath.class);
 
@@ -192,7 +190,7 @@ final class SemgrepModuleTest {
     Path javaFile = Files.createTempFile(tmpDir, "HasStuff", ".java");
     Files.writeString(javaFile, javaCode, StandardOpenOption.TRUNCATE_EXISTING);
 
-    SemgrepModule module = new SemgrepModule(tmpDir, List.of(codemod));
+    SemgrepModule module = createModule(tmpDir, List.of(codemod));
     Injector injector = Guice.createInjector(module);
     SarifPluginJavaParserChanger<ObjectCreationExpr> instance =
         (SarifPluginJavaParserChanger<ObjectCreationExpr>) injector.getInstance(codemod);
@@ -202,20 +200,25 @@ final class SemgrepModuleTest {
   }
 
   @Test
-  void it_detects_rule_ids(final @TempDir Path tmpDir) throws IOException {
-    SemgrepModule module = new SemgrepModule(tmpDir, List.of(UsesImplicitYamlPath.class));
-
-    String id = module.detectSingleRuleFromYaml("rules:\n  - id: foo\n    pattern: bar\n");
+  void it_detects_rule_ids() {
+    String id =
+        DefaultSemgrepRuleFactory.detectSingleRuleFromYaml(
+            "rules:\n  - id: foo\n    pattern: bar\n");
     assertThat(id, is("foo"));
 
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            module.detectSingleRuleFromYaml(
+            DefaultSemgrepRuleFactory.detectSingleRuleFromYaml(
                 "rules:\n  - id: foo\n  - id: bar\n    pattern: baz\n"));
     assertThrows(
         IllegalArgumentException.class,
-        () -> module.detectSingleRuleFromYaml("rules:\n  - pattern: baz\n"));
+        () -> DefaultSemgrepRuleFactory.detectSingleRuleFromYaml("rules:\n  - pattern: baz\n"));
+  }
+
+  private SemgrepModule createModule(
+      final Path dir, final List<Class<? extends CodeChanger>> codemodTypes) throws IOException {
+    return new SemgrepModule(dir, List.of("**"), List.of(), codemodTypes);
   }
 
   static Stream<Arguments> codemodsThatLookForNewStuffInstances() {
@@ -240,8 +243,11 @@ final class SemgrepModuleTest {
     SemgrepModule module =
         new SemgrepModule(
             tmpDir,
+            List.of("**"),
+            List.of(),
             List.of(UsesOfflineSemgrepCodemod.class),
-            map.entrySet().iterator().next().getValue());
+            map.entrySet().iterator().next().getValue(),
+            new DefaultSemgrepRuleFactory());
     Injector injector = Guice.createInjector(module);
     UsesOfflineSemgrepCodemod instance = injector.getInstance(UsesOfflineSemgrepCodemod.class);
 
@@ -261,6 +267,7 @@ final class SemgrepModuleTest {
 
   @Codemod(
       id = "pixee-test:java/offline-semgrep",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesOfflineSemgrepCodemod implements CodeChanger {
 
@@ -282,11 +289,6 @@ final class SemgrepModuleTest {
     @Override
     public String getDescription() {
       return null;
-    }
-
-    @Override
-    public Optional<String> getSourceControlUrl() {
-      return Optional.empty();
     }
 
     @Override

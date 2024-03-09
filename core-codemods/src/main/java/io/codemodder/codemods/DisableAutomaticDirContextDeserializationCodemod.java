@@ -11,6 +11,7 @@ import javax.inject.Inject;
 /** Disables automatic return of objects in {@code javax.naming.DirContext#search}. */
 @Codemod(
     id = "pixee:java/disable-dircontext-deserialization",
+    importance = Importance.HIGH,
     reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
 public final class DisableAutomaticDirContextDeserializationCodemod
     extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
@@ -18,7 +19,7 @@ public final class DisableAutomaticDirContextDeserializationCodemod
   @Inject
   public DisableAutomaticDirContextDeserializationCodemod(
       @SemgrepScan(ruleId = "disable-dircontext-deserialization") final RuleSarif sarif) {
-    super(sarif, ObjectCreationExpr.class, RegionExtractor.FROM_FIRST_LOCATION);
+    super(sarif, ObjectCreationExpr.class, SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION);
   }
 
   @Override

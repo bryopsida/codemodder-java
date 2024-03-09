@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 import io.codemodder.*;
 import io.codemodder.codetf.CodeTFChange;
 import io.codemodder.codetf.CodeTFChangesetEntry;
+import io.codemodder.codetf.CodeTFDiffSide;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -138,8 +139,7 @@ final class MavenProviderTest {
         new MavenProvider(
             new MavenProvider.DefaultPomModifier(),
             new MavenProvider.DefaultPomFileFinder(),
-            defaultDescriptor,
-            false);
+            defaultDescriptor);
 
     DependencyUpdateResult result =
         provider.updateDependencies(
@@ -166,17 +166,14 @@ final class MavenProviderTest {
 
   private static Stream<Arguments> expectedChangeDescriptionLocations() {
     return Stream.of(
-        Arguments.of(simplePom, 7), // inject both dependencies and properties
+        Arguments.of(simplePom, 7), // injects all new text in one delta
         Arguments.of(
             simplePomWithExistingSections,
-            13), // already has both sections, just inject into those places
+            16), // already has both sections, record at dependencies section
         Arguments.of(
             webgoatPomThatJustNeedsUpgrades,
-            151), // just updating the version number here, everything else is fine
-        Arguments.of(
-            webgoatPom,
-            151) // injects both dependencies and properties in a more complicated, real-life
-        // scenario
+            151), // just updating the version number here in the properties
+        Arguments.of(webgoatPom, 413) // add to the end of the dependencies section
         );
   }
 
@@ -192,8 +189,7 @@ final class MavenProviderTest {
         new MavenProvider(
             new MavenProvider.DefaultPomModifier(),
             new MavenProvider.DefaultPomFileFinder(),
-            defaultDescriptor,
-            false);
+            defaultDescriptor);
 
     DependencyUpdateResult result =
         provider.updateDependencies(
@@ -233,8 +229,7 @@ final class MavenProviderTest {
         new MavenProvider(
             new MavenProvider.DefaultPomModifier(),
             new MavenProvider.DefaultPomFileFinder(),
-            defaultDescriptor,
-            true);
+            defaultDescriptor);
 
     DependencyUpdateResult result =
         provider.updateDependencies(
@@ -250,18 +245,22 @@ final class MavenProviderTest {
     // module1/pom.xml adding mars1 to dependencies
     assertThat(changes.get(0).getPath()).isEqualTo("module1/pom.xml");
     assertThat(changes.get(0).getChanges().get(0).getLineNumber()).isEqualTo(19);
+    assertThat(changes.get(0).getChanges().get(0).getDiffSide()).isEqualTo(CodeTFDiffSide.RIGHT);
 
     // pom.xml adding mars1 to dependency management
     assertThat(changes.get(1).getPath()).isEqualTo("pom.xml");
     assertThat(changes.get(1).getChanges().get(0).getLineNumber()).isEqualTo(15);
+    assertThat(changes.get(1).getChanges().get(0).getDiffSide()).isEqualTo(CodeTFDiffSide.RIGHT);
 
     // module1/pom.xml adding mars2 to dependencies
     assertThat(changes.get(2).getPath()).isEqualTo("module1/pom.xml");
     assertThat(changes.get(2).getChanges().get(0).getLineNumber()).isEqualTo(23);
+    assertThat(changes.get(2).getChanges().get(0).getDiffSide()).isEqualTo(CodeTFDiffSide.RIGHT);
 
     // pom.xml adding mars2 to dependency management
     assertThat(changes.get(3).getPath()).isEqualTo("pom.xml");
     assertThat(changes.get(3).getChanges().get(0).getLineNumber()).isEqualTo(20);
+    assertThat(changes.get(3).getChanges().get(0).getDiffSide()).isEqualTo(CodeTFDiffSide.RIGHT);
 
     // we don't have license facts for these dependencies, so we should be silent on their license!
     boolean matchedLicenseFacts =
@@ -287,8 +286,7 @@ final class MavenProviderTest {
         new MavenProvider(
             new MavenProvider.DefaultPomModifier(),
             new MavenProvider.DefaultPomFileFinder(),
-            defaultDescriptor,
-            false);
+            defaultDescriptor);
 
     DependencyUpdateResult result =
         provider.updateDependencies(
@@ -322,8 +320,7 @@ final class MavenProviderTest {
   void it_returns_empty_when_no_pom() throws IOException {
     when(pomFileFinder.findForFile(any(), any())).thenReturn(Optional.empty());
 
-    MavenProvider provider =
-        new MavenProvider(pomModifier, pomFileFinder, defaultDescriptor, false);
+    MavenProvider provider = new MavenProvider(pomModifier, pomFileFinder, defaultDescriptor);
 
     DependencyUpdateResult result =
         provider.updateDependencies(projectDir, marsJavaFile, List.of(marsDependency1));

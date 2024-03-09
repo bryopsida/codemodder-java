@@ -10,12 +10,13 @@ import io.codemodder.*;
 import io.codemodder.codetf.CodeTFChange;
 import io.codemodder.codetf.CodeTFChangesetEntry;
 import io.codemodder.codetf.CodeTFResult;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.hamcrest.CoreMatchers;
 import org.junit.jupiter.api.BeforeEach;
@@ -220,25 +221,40 @@ final class AddMissingI18nCodemodTest {
         is(true));
   }
 
-  private CodeTFResult runCodemod() {
-    var loader = new CodemodLoader(List.of(AddMissingI18nCodemod.class), repoRoot);
+  private CodeTFResult runCodemod() throws IOException {
+    CodemodLoader loader = createLoader(AddMissingI18nCodemod.class, repoRoot);
     List<CodemodIdPair> codemods = loader.getCodemods();
     assertThat("Only expecting 1 codemod per test", codemods.size(), equalTo(1));
     CodemodIdPair pair = codemods.get(0);
     CodemodExecutor executor =
-        CodemodExecutor.from(
+        CodemodExecutorFactory.from(
             repoRoot,
             IncludesExcludes.any(),
             pair,
             List.of(),
             List.of(),
-            CachingJavaParser.from(new JavaParser()),
+            FileCache.createDefault(),
+            JavaParserFacade.from(JavaParser::new),
             EncodingDetector.create());
     return executor.execute(
         List.of(
             repoRoot.resolve("whatever_en_US.properties"),
             repoRoot.resolve("whatever_es_MX.properties"),
             repoRoot.resolve("whatever_bg.properties")));
+  }
+
+  private CodemodLoader createLoader(final Class<? extends CodeChanger> codemodType, final Path dir)
+      throws IOException {
+    return new CodemodLoader(
+        List.of(codemodType),
+        CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+        repoRoot,
+        List.of("**"),
+        List.of(),
+        Files.list(dir).toList(),
+        Map.of(),
+        List.of(),
+        null);
   }
 
   /** If we can't connect to AWS, skip the test. */

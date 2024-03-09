@@ -10,13 +10,14 @@ import io.codemodder.*;
 import io.codemodder.codetf.CodeTFChange;
 import io.codemodder.codetf.CodeTFChangesetEntry;
 import io.codemodder.codetf.CodeTFResult;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -46,16 +47,30 @@ final class VerbTamperingCodemodTest {
       throws IOException {
     String dir = "src/test/resources/verb-tampering/" + webXmlDir;
     copyDir(Path.of(dir), tmpDir);
-    CodemodLoader loader = new CodemodLoader(List.of(VerbTamperingCodemod.class), tmpDir);
+
     Path webxml = tmpDir.resolve("web.xml");
+
+    CodemodLoader loader =
+        new CodemodLoader(
+            List.of(VerbTamperingCodemod.class),
+            CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+            tmpDir,
+            List.of("**"),
+            List.of(),
+            List.of(webxml),
+            Map.of(),
+            List.of(),
+            null);
+
     CodemodExecutor executor =
-        CodemodExecutor.from(
+        CodemodExecutorFactory.from(
             tmpDir,
             IncludesExcludes.any(),
             loader.getCodemods().get(0),
             List.of(),
             List.of(),
-            CachingJavaParser.from(new JavaParser()),
+            FileCache.createDefault(),
+            JavaParserFacade.from(JavaParser::new),
             EncodingDetector.create());
     CodeTFResult result = executor.execute(List.of(webxml));
     assertThat(result.getChangeset().isEmpty(), is(!expectChange));

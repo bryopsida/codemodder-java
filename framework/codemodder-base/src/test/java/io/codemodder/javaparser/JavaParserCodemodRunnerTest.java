@@ -73,7 +73,7 @@ final class JavaParserCodemodRunnerTest {
   void setup(@TempDir Path tmpDir) {
     this.runner =
         new JavaParserCodemodRunner(
-            CachingJavaParser.from(new JavaParser()),
+            JavaParserFacade.from(JavaParser::new),
             updatesAllMethodNamesChanger,
             EncodingDetector.create());
     this.tmpDir = tmpDir;
@@ -108,6 +108,7 @@ final class JavaParserCodemodRunnerTest {
     when(context.codemodId()).thenReturn("my-codemod-id");
     when(context.lineIncludesExcludes()).thenReturn(new LineIncludesExcludes.MatchesEverything());
     when(context.path()).thenReturn(javaFile);
+    when(context.contents()).thenReturn(javaCode);
     CodeDirectory dir = mock(CodeDirectory.class);
     when(dir.asPath()).thenReturn(tmpDir);
     when(context.codeDirectory()).thenReturn(dir);
@@ -141,13 +142,14 @@ final class JavaParserCodemodRunnerTest {
     when(context.codemodId()).thenReturn("pixee-test:java/my-composite");
     when(context.lineIncludesExcludes()).thenReturn(new LineIncludesExcludes.MatchesEverything());
     when(context.path()).thenReturn(javaFile);
+    when(context.contents()).thenReturn(javaCode);
     CodeDirectory dir = mock(CodeDirectory.class);
     when(dir.asPath()).thenReturn(tmpDir);
     when(context.codeDirectory()).thenReturn(dir);
 
     this.runner =
         new JavaParserCodemodRunner(
-            CachingJavaParser.from(new JavaParser()),
+            JavaParserFacade.from(JavaParser::new),
             new RunsBothCodemod(
                 new UpdatesMethodNamesParserChanger(),
                 new UpdatesClassNamesParserChanger(),
@@ -164,7 +166,10 @@ final class JavaParserCodemodRunnerTest {
     assertThat(Files.readString(javaFile), is(updatedCode));
   }
 
-  @Codemod(reviewGuidance = ReviewGuidance.MERGE_AFTER_REVIEW, id = "pixee-test:java/my-composite")
+  @Codemod(
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_REVIEW,
+      importance = Importance.LOW,
+      id = "pixee-test:java/my-composite")
   private static class RunsBothCodemod extends CompositeJavaParserChanger {
     @Inject
     public RunsBothCodemod(

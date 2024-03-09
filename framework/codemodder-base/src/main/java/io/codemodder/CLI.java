@@ -1,15 +1,21 @@
 package io.codemodder;
 
+import static io.codemodder.Logs.logEnteringPhase;
+
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.ConsoleAppender;
+import ch.qos.logback.core.OutputStreamAppender;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.javaparser.JavaParser;
 import com.google.common.base.Stopwatch;
+import io.codemodder.codetf.CodeTFChangesetEntry;
 import io.codemodder.codetf.CodeTFReport;
 import io.codemodder.codetf.CodeTFReportGenerator;
 import io.codemodder.codetf.CodeTFResult;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import io.codemodder.javaparser.JavaParserFactory;
 import java.io.File;
 import java.io.IOException;
@@ -23,10 +29,15 @@ import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import javax.inject.Provider;
+import net.logstash.logback.encoder.LogstashEncoder;
+import net.logstash.logback.fieldnames.LogstashCommonFieldNames;
+import net.logstash.logback.fieldnames.LogstashFieldNames;
 import org.apache.commons.io.FileUtils;
 import org.jetbrains.annotations.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import picocli.CommandLine;
 
 /** The mixinStandardHelpOptions provides version and help options. */
@@ -57,6 +68,24 @@ final class CLI implements Callable<Integer> {
   private boolean dryRun;
 
   @CommandLine.Option(
+      names = {"--max-files"},
+      description = "the number of files each codemod can scan",
+      defaultValue = "-1")
+  private int maxFiles;
+
+  @CommandLine.Option(
+      names = {"--max-workers"},
+      description = "the maximum number of workers (threads) to use for parallel processing",
+      defaultValue = "-1")
+  private int maxWorkers;
+
+  @CommandLine.Option(
+      names = {"--max-file-size"},
+      description = "the maximum file size in bytes that each codemod can scan",
+      defaultValue = "-1")
+  private int maxFileSize;
+
+  @CommandLine.Option(
       names = {"--dont-exit"},
       description = "dont exit the process after running the codemods",
       hidden = true,
@@ -74,6 +103,23 @@ final class CLI implements Callable<Integer> {
       description = "the format for the data output file (\"codetf\" or \"diff\")",
       defaultValue = "codetf")
   private OutputFormat outputFormat;
+
+  @CommandLine.Option(
+      names = {"--log-format"},
+      description = "the format of log data(\"human\" or \"json\")",
+      defaultValue = "human")
+  private LogFormat logFormat;
+
+  @CommandLine.Option(
+      names = {"--project-name"},
+      description = "a descriptive name for the project being scanned for reporting")
+  private String projectName;
+
+  @CommandLine.Option(
+      names = {"--sonar-issues-json"},
+      description =
+          "a path to a file containing the result of a call to the Sonar Web API Issues endpoint")
+  private Path sonarIssuesJsonFilePath;
 
   @CommandLine.Option(
       names = {"--list"},
@@ -128,6 +174,12 @@ final class CLI implements Callable<Integer> {
   enum OutputFormat {
     CODETF,
     DIFF
+  }
+
+  /** The format for the log output. */
+  enum LogFormat {
+    HUMAN,
+    JSON
   }
 
   CLI(final String[] args, final List<Class<? extends CodeChanger>> codemodTypes) {
@@ -202,9 +254,13 @@ final class CLI implements Callable<Integer> {
 
   @Override
   public Integer call() throws IOException {
+
     if (verbose) {
-      LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
-      context.getLogger(LoggingConfigurator.OUR_ROOT_LOGGER_NAME).setLevel(Level.DEBUG);
+      setupVerboseLogging();
+    }
+
+    if (LogFormat.JSON.equals(logFormat)) {
+      setupJsonLogging();
     }
 
     if (listCodemods) {
@@ -215,20 +271,23 @@ final class CLI implements Callable<Integer> {
       return SUCCESS;
     }
 
-    if (output == null) {
-      log.error("The output file is required");
-      return ERROR_CANT_WRITE_OUTPUT_FILE;
-    }
+    logEnteringPhase(Logs.ExecutionPhase.STARTING);
+    log.info("codemodder: java/{}", CLI.class.getPackage().getImplementationVersion());
 
     if (projectDirectory == null) {
       log.error("No project directory specified");
       return ERROR_CANT_READ_PROJECT_DIRECTORY;
     }
 
-    Path outputPath = output.toPath();
-    if (!Files.isWritable(outputPath) && !Files.isWritable(outputPath.getParent())) {
-      log.error("The output file (or its parent directory) is not writable");
-      return ERROR_CANT_WRITE_OUTPUT_FILE;
+    Path outputPath = null;
+    if (output != null) {
+      outputPath = output.getAbsoluteFile().toPath();
+
+      // check if the output file parent directory doesn't exist or isn't writable
+      if (!Files.exists(outputPath.getParent()) || !Files.isWritable(outputPath.getParent())) {
+        log.error("The output file parent directory doesn't exist or isn't writable");
+        return ERROR_CANT_WRITE_OUTPUT_FILE;
+      }
     }
 
     Path projectPath = projectDirectory.toPath();
@@ -237,16 +296,23 @@ final class CLI implements Callable<Integer> {
       return ERROR_CANT_READ_PROJECT_DIRECTORY;
     }
 
+    if (maxWorkers < -1) {
+      log.error("Invalid value for workers");
+      return -1;
+    }
+
+    logEnteringPhase(Logs.ExecutionPhase.SETUP);
+
     if (dryRun) {
       // create a temp dir and copy all the contents into it -- this may be slow for big repos on
       // cloud i/o
       Path copiedProjectDirectory = dryRunTempDirCreationStrategy.createTempDir();
       Stopwatch watch = Stopwatch.createStarted();
-      log.info("Copying project directory for dry run..: {}", copiedProjectDirectory);
+      log.debug("dry run temporary directory: {}", copiedProjectDirectory);
       FileUtils.copyDirectory(projectDirectory, copiedProjectDirectory.toFile());
       watch.stop();
       Duration elapsed = watch.elapsed();
-      log.info("Copy took: {}", elapsed);
+      log.debug("dry run copy finished: {}ms", elapsed.toMillis());
 
       // now that we've copied it, reassign the project directory to that place
       projectDirectory = copiedProjectDirectory.toFile();
@@ -268,6 +334,9 @@ final class CLI implements Callable<Integer> {
       }
       IncludesExcludes includesExcludes =
           IncludesExcludes.withSettings(projectDirectory, pathIncludes, pathExcludes);
+
+      log.debug("including paths: {}", pathIncludes);
+      log.debug("excluding paths: {}", pathExcludes);
 
       // get all files that match
       List<SourceDirectory> sourceDirectories =
@@ -297,8 +366,19 @@ final class CLI implements Callable<Integer> {
       List<ParameterArgument> codemodParameters =
           createFromParameterStrings(this.codemodParameters);
       CodemodLoader loader =
-          new CodemodLoader(codemodTypes, regulator, projectPath, pathSarifMap, codemodParameters);
+          new CodemodLoader(
+              codemodTypes,
+              regulator,
+              projectPath,
+              pathIncludes,
+              pathExcludes,
+              filePaths,
+              pathSarifMap,
+              codemodParameters,
+              sonarIssuesJsonFilePath);
       List<CodemodIdPair> codemods = loader.getCodemods();
+
+      log.debug("sarif files: {}", sarifFiles.size());
 
       // create the project providers
       List<ProjectProvider> projectProviders = loadProjectProviders();
@@ -311,8 +391,20 @@ final class CLI implements Callable<Integer> {
        * the original concrete syntax information (e.g., line numbers) in JavaParser from the first access. This
        * is what allows our codemods to act on SARIF-providing tools data accurately over multiple codemods.
        */
-      JavaParser javaParser = javaParserFactory.create(sourceDirectories);
-      CachingJavaParser cachingJavaParser = CachingJavaParser.from(javaParser);
+      logEnteringPhase(Logs.ExecutionPhase.SCANNING);
+
+      Provider<JavaParser> javaParserProvider =
+          () -> {
+            try {
+              return javaParserFactory.create(sourceDirectories);
+            } catch (IOException e) {
+              throw new UncheckedIOException(e);
+            }
+          };
+      JavaParserFacade javaParserFacade = JavaParserFacade.from(javaParserProvider);
+      int maxFileCacheSize = 10_000;
+      FileCache fileCache = FileCache.createDefault(maxFileCacheSize);
+
       for (CodemodIdPair codemod : codemods) {
         CodemodExecutor codemodExecutor =
             new DefaultCodemodExecutor(
@@ -321,34 +413,69 @@ final class CLI implements Callable<Integer> {
                 codemod,
                 projectProviders,
                 codeTFProviders,
-                cachingJavaParser,
-                encodingDetector);
+                fileCache,
+                javaParserFacade,
+                encodingDetector,
+                maxFileSize,
+                maxFiles,
+                maxWorkers);
+
+        log.info("running codemod: {}", codemod.getId());
         CodeTFResult result = codemodExecutor.execute(filePaths);
         if (!result.getChangeset().isEmpty() || !result.getFailedFiles().isEmpty()) {
           results.add(result);
+        }
+        if (!result.getChangeset().isEmpty()) {
+          log.info("changed:");
+          result
+              .getChangeset()
+              .forEach(
+                  entry -> {
+                    log.info("  - " + entry.getPath());
+                    String indentedDiff =
+                        entry
+                            .getDiff()
+                            .lines()
+                            .map(line -> "      " + line)
+                            .collect(Collectors.joining(System.lineSeparator()));
+                    log.debug("    diff:");
+                    log.debug(indentedDiff);
+                  });
+        }
+        if (!result.getFailedFiles().isEmpty()) {
+          log.info("failed:");
+          result.getFailedFiles().forEach(f -> log.info("  - {}", f));
         }
       }
 
       Instant end = clock.instant();
       long elapsed = end.toEpochMilli() - start.toEpochMilli();
 
-      // write out the output
-      if (OutputFormat.CODETF.equals(outputFormat)) {
-        CodeTFReport report =
-            reportGenerator.createReport(
-                projectDirectory.toPath(),
-                String.join(" ", args),
-                sarifs == null
-                    ? List.of()
-                    : sarifs.stream().map(Path::of).collect(Collectors.toList()),
-                results,
-                elapsed);
-        ObjectMapper mapper = new ObjectMapper();
-        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
-        Files.writeString(outputPath, mapper.writeValueAsString(report));
-      } else if (OutputFormat.DIFF.equals(outputFormat)) {
-        throw new UnsupportedOperationException("not supported yet");
+      logEnteringPhase(Logs.ExecutionPhase.REPORT);
+      logMetrics(results);
+
+      // write out the output if they want it
+      if (outputPath != null) {
+        if (OutputFormat.CODETF.equals(outputFormat)) {
+          CodeTFReport report =
+              reportGenerator.createReport(
+                  projectDirectory.toPath(),
+                  String.join(" ", args),
+                  sarifs == null
+                      ? List.of()
+                      : sarifs.stream().map(Path::of).collect(Collectors.toList()),
+                  results,
+                  elapsed);
+          ObjectMapper mapper = new ObjectMapper();
+          mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
+          Files.writeString(outputPath, mapper.writeValueAsString(report));
+          log.debug("report file: {}", outputPath);
+        } else if (OutputFormat.DIFF.equals(outputFormat)) {
+          throw new UnsupportedOperationException("not supported yet");
+        }
       }
+
+      log.debug("elapsed: {}ms", elapsed);
 
       // this is a special exit code that tells the caller to not exit
       if (dontExit) {
@@ -359,10 +486,88 @@ final class CLI implements Callable<Integer> {
     } finally {
       if (dryRun) {
         // delete the temp directory
-        log.debug("Cleaning temp directory: {}", projectDirectory);
         FileUtils.deleteDirectory(projectDirectory);
+        log.debug("cleaned temp directory: {}", projectDirectory);
       }
     }
+  }
+
+  /**
+   * Performs a resetting of the logging settings because they're wildly different if we do
+   * structured logging.
+   */
+  private void setupJsonLogging() {
+    LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
+    ch.qos.logback.classic.Logger rootLogger =
+        context.getLogger(LoggingConfigurator.OUR_ROOT_LOGGER_NAME);
+    rootLogger.detachAndStopAllAppenders();
+    ConsoleAppender<ILoggingEvent> appender = new ConsoleAppender<>();
+    appender.setContext(context);
+    configureAppender(appender, Optional.ofNullable(projectName));
+    rootLogger.addAppender(appender);
+  }
+
+  /**
+   * This code is difficult to test because it affects stdout at runtime, and JUnit appears to be
+   * mucking with stdout capture.
+   */
+  @VisibleForTesting
+  static void configureAppender(
+      final OutputStreamAppender<ILoggingEvent> appender, final Optional<String> projectName) {
+    LogstashEncoder logstashEncoder = new LogstashEncoder();
+    logstashEncoder.setContext(appender.getContext());
+
+    // we need this to get the caller data, like the file, line, etc.
+    logstashEncoder.setIncludeCallerData(true);
+
+    // customize the output to the specification, but include timestamp as well since that's allowed
+    LogstashFieldNames fieldNames = logstashEncoder.getFieldNames();
+    fieldNames.setCallerFile("file");
+    fieldNames.setCallerLine("line");
+    fieldNames.setTimestamp("timestamp");
+    fieldNames.setCaller(null);
+    fieldNames.setCallerClass(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+    fieldNames.setCallerMethod(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+    fieldNames.setVersion(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+    fieldNames.setLogger(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+    fieldNames.setThread(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+    fieldNames.setLevelValue(LogstashCommonFieldNames.IGNORE_FIELD_INDICATOR);
+
+    String projectNameKey = "project_name";
+    if (projectName.isPresent()) {
+      MDC.put(projectNameKey, projectName.get());
+    } else {
+      // clear it in case this from tests
+      MDC.remove(projectNameKey);
+    }
+
+    logstashEncoder.addIncludeMdcKeyName(projectNameKey);
+    logstashEncoder.start();
+    appender.setEncoder(logstashEncoder);
+    appender.start();
+  }
+
+  private void setupVerboseLogging() {
+    LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
+    ch.qos.logback.classic.Logger rootLogger =
+        context.getLogger(LoggingConfigurator.OUR_ROOT_LOGGER_NAME);
+    rootLogger.setLevel(Level.DEBUG);
+  }
+
+  private static void logMetrics(final List<CodeTFResult> results) {
+    List<String> failedFiles = results.stream().flatMap(r -> r.getFailedFiles().stream()).toList();
+
+    List<String> changedFiles =
+        results.stream()
+            .flatMap(r -> r.getChangeset().stream())
+            .map(CodeTFChangesetEntry::getPath)
+            .toList();
+
+    long uniqueChangedFiles = changedFiles.stream().distinct().count();
+    long uniqueFailedFiles = failedFiles.stream().distinct().count();
+
+    log.debug("failed files: {} ({} unique)", failedFiles.size(), uniqueFailedFiles);
+    log.debug("changed files: {} ({} unique)", changedFiles.size(), uniqueChangedFiles);
   }
 
   private List<CodeTFProvider> loadCodeTFProviders() {
@@ -411,7 +616,16 @@ final class CLI implements Callable<Integer> {
           "**/web.xml");
 
   private static final List<String> defaultPathExcludes =
-      List.of("**/test/**", "**/tests/**", "**/target/**", "**/build/**", "**/.mvn/**", ".mvn/**");
+      List.of(
+          "**/test/**",
+          "**/testFixtures/**",
+          "**/*Test.java",
+          "**/intTest/**",
+          "**/tests/**",
+          "**/target/**",
+          "**/build/**",
+          "**/.mvn/**",
+          ".mvn/**");
 
   private static final Logger log = LoggerFactory.getLogger(CLI.class);
 }

@@ -24,7 +24,8 @@ public final class CodeQLRuleSarif implements RuleSarif {
   private final Map<Path, List<Result>> resultsCache;
   private final Path repositoryRoot;
 
-  public CodeQLRuleSarif(final String ruleId, final SarifSchema210 sarif, Path repositoryRoot) {
+  public CodeQLRuleSarif(
+      final String ruleId, final SarifSchema210 sarif, final Path repositoryRoot) {
     this.sarif = Objects.requireNonNull(sarif);
     this.ruleId = Objects.requireNonNull(ruleId);
     this.repositoryRoot = repositoryRoot;
@@ -51,14 +52,14 @@ public final class CodeQLRuleSarif implements RuleSarif {
   }
 
   @Override
-  public List<Region> getRegionsFromResultsByRule(Path path) {
-    return getResultsByPath(path).stream()
+  public List<Region> getRegionsFromResultsByRule(final Path path) {
+    return getResultsByLocationPath(path).stream()
         .map(result -> result.getLocations().get(0).getPhysicalLocation().getRegion())
         .collect(Collectors.toUnmodifiableList());
   }
 
   @Override
-  public List<Result> getResultsByPath(Path path) {
+  public List<Result> getResultsByLocationPath(final Path path) {
     if (resultsCache.containsKey(path)) {
       return resultsCache.get(path);
     }
@@ -78,8 +79,9 @@ public final class CodeQLRuleSarif implements RuleSarif {
                           .getArtifactLocation()
                           .getUri();
                   try {
-                    if (Files.exists(repositoryRoot.resolve(Path.of(uri)))) {
-                      return Files.isSameFile(path, repositoryRoot.resolve(Path.of(uri)));
+                    Path uriPath = Path.of(uri);
+                    if (Files.exists(repositoryRoot.resolve(uriPath))) {
+                      return Files.isSameFile(path, repositoryRoot.resolve(uriPath));
                     } else {
                       return false;
                     }
@@ -88,7 +90,7 @@ public final class CodeQLRuleSarif implements RuleSarif {
                     return false;
                   }
                 })
-            .collect(Collectors.toUnmodifiableList());
+            .toList();
     resultsCache.put(path, results);
     return results;
   }

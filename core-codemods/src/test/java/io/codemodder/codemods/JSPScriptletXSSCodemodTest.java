@@ -7,13 +7,14 @@ import com.github.javaparser.JavaParser;
 import io.codemodder.*;
 import io.codemodder.codetf.CodeTFChange;
 import io.codemodder.codetf.CodeTFResult;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -34,20 +35,32 @@ final class JSPScriptletXSSCodemodTest {
       throws IOException {
     String dir = "src/test/resources/encode-jsp-scriptlet/" + jspDir;
     copyDir(Path.of(dir), tmpDir);
-    CodemodLoader codemodInvoker = new CodemodLoader(List.of(JSPScriptletXSSCodemod.class), tmpDir);
 
     Path beforeJsp = tmpDir.resolve("test.jsp.before");
     Path jsp = tmpDir.resolve("test.jsp");
     Files.copy(beforeJsp, jsp);
+
+    CodemodLoader codemodInvoker =
+        new CodemodLoader(
+            List.of(JSPScriptletXSSCodemod.class),
+            CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+            tmpDir,
+            List.of("**"),
+            List.of(),
+            List.of(jsp),
+            Map.of(),
+            List.of(),
+            null);
     CodemodIdPair codemod = codemodInvoker.getCodemods().get(0);
     CodemodExecutor executor =
-        CodemodExecutor.from(
+        CodemodExecutorFactory.from(
             tmpDir,
             IncludesExcludes.any(),
             codemod,
             List.of(),
             List.of(),
-            CachingJavaParser.from(new JavaParser()),
+            FileCache.createDefault(),
+            JavaParserFacade.from(JavaParser::new),
             EncodingDetector.create());
     CodeTFResult result = executor.execute(List.of(jsp));
 

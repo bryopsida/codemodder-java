@@ -14,13 +14,24 @@ public final class SemgrepProvider implements CodemodProvider {
   @Override
   public Set<AbstractModule> getModules(
       final Path codeDirectory,
+      final List<Path> includedFiles,
+      final List<String> includePaths,
+      final List<String> excludePaths,
       final List<Class<? extends CodeChanger>> codemodTypes,
-      final List<RuleSarif> sarifs) {
-    return Set.of(new SemgrepModule(codeDirectory, codemodTypes, sarifs));
+      final List<RuleSarif> sarifs,
+      final Path sonarIssuesJsonFile) {
+    return Set.of(
+        new SemgrepModule(
+            codeDirectory,
+            includePaths,
+            excludePaths,
+            codemodTypes,
+            sarifs,
+            new DefaultSemgrepRuleFactory()));
   }
 
   @Override
   public List<String> wantsSarifToolNames() {
-    return List.of("semgrep");
+    return List.of("semgrep", "Semgrep");
   }
 }

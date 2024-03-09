@@ -7,14 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.github.javaparser.JavaParser;
 import io.codemodder.codetf.*;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import javax.inject.Inject;
 import org.hamcrest.CoreMatchers;
 import org.junit.jupiter.api.Test;
@@ -22,10 +22,16 @@ import org.junit.jupiter.api.io.TempDir;
 
 final class CodemodLoaderTest {
 
-  @Codemod(id = "test_mod", reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
+  @Codemod(
+      id = "test_mod",
+      importance = Importance.LOW,
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class InvalidCodemodName extends NoReportChanger {}
 
-  @Codemod(id = "pixee:java/id", reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
+  @Codemod(
+      id = "pixee:java/id",
+      importance = Importance.LOW,
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class ValidCodemod extends NoReportChanger {}
 
   private static class NoReportChanger implements CodeChanger {
@@ -37,11 +43,6 @@ final class CodemodLoaderTest {
     @Override
     public String getDescription() {
       return "description";
-    }
-
-    @Override
-    public Optional<String> getSourceControlUrl() {
-      return Optional.empty();
     }
 
     @Override
@@ -70,13 +71,15 @@ final class CodemodLoaderTest {
     assertThrows(
         UnsupportedOperationException.class,
         () -> {
-          new CodemodLoader(List.of(ValidCodemod.class, ValidCodemod.class), tmpDir);
+          createLoader(List.of(ValidCodemod.class, ValidCodemod.class), tmpDir);
         });
   }
 
   @Codemod(
       id = "test:java/changes-file",
-      reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW,
+      importance = Importance.LOW,
+      executionPriority = CodemodExecutionPriority.HIGH)
   static class ChangesFile extends RawFileChanger {
     ChangesFile() {
       super(new EmptyReporter());
@@ -114,6 +117,7 @@ final class CodemodLoaderTest {
 
   @Codemod(
       id = "test:java/changes-file-again",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class ChangesFileAgain extends RawFileChanger {
 
@@ -125,7 +129,48 @@ final class CodemodLoaderTest {
         throws IOException {
       Path path = context.path();
       String contents = Files.readString(path);
-      contents += "\nc\n";
+      contents += "\nc";
+      Files.writeString(path, contents);
+      return List.of();
+    }
+
+    @Override
+    public String getSummary() {
+      return "summary";
+    }
+
+    @Override
+    public String getDescription() {
+      return "description";
+    }
+
+    @Override
+    public List<CodeTFReference> getReferences() {
+      return List.of();
+    }
+
+    @Override
+    public String getIndividualChangeDescription(Path filePath, CodemodChange change) {
+      return null;
+    }
+  }
+
+  @Codemod(
+      id = "test:java/changes-file-yet-again",
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW,
+      importance = Importance.LOW,
+      executionPriority = CodemodExecutionPriority.LOW)
+  static class ChangesFileYetAgain extends RawFileChanger {
+
+    ChangesFileYetAgain() {
+      super(new EmptyReporter());
+    }
+
+    public List<CodemodChange> visitFile(final CodemodInvocationContext context)
+        throws IOException {
+      Path path = context.path();
+      String contents = Files.readString(path);
+      contents += "\nd\n";
       Files.writeString(path, contents);
       return List.of();
     }
@@ -157,33 +202,53 @@ final class CodemodLoaderTest {
    * that they both had their effect.
    */
   @Test
-  void it_handles_two_consecutive_codemod_changes(@TempDir Path tmpDir) throws IOException {
-    Path file = tmpDir.resolve("file.txt");
-    Files.writeString(file, "a", StandardCharsets.UTF_8);
+  void it_handles_consecutive_codemod_changes(@TempDir Path tmpDir) throws IOException {
+    // re-order the codemods in different ways to ensure that the execution priority is honored as
+    // well
+    List<List<Class<? extends CodeChanger>>> codemodsInDifferentOrders =
+        List.of(
+            // 1, 2, 3
+            List.of(ChangesFile.class, ChangesFileAgain.class, ChangesFileYetAgain.class),
+            // 1, 3, 2
+            List.of(ChangesFile.class, ChangesFileYetAgain.class, ChangesFileAgain.class),
+            // 2, 1, 3
+            List.of(ChangesFileAgain.class, ChangesFile.class, ChangesFileYetAgain.class),
+            // 2, 3, 1
+            List.of(ChangesFileAgain.class, ChangesFileYetAgain.class, ChangesFile.class),
+            // 3, 2, 1
+            List.of(ChangesFileYetAgain.class, ChangesFileAgain.class, ChangesFile.class),
+            // 3, 1, 2
+            List.of(ChangesFileYetAgain.class, ChangesFile.class, ChangesFileAgain.class));
 
-    List<Class<? extends CodeChanger>> codemods =
-        List.of(ChangesFile.class, ChangesFileAgain.class);
-    CodemodLoader loader = new CodemodLoader(codemods, tmpDir);
+    for (var codemods : codemodsInDifferentOrders) {
+      Path file = tmpDir.resolve("file.txt");
+      Files.writeString(file, "a", StandardCharsets.UTF_8);
+      CodemodLoader loader = createLoader(codemods, tmpDir);
+      for (CodemodIdPair codemodIdPair : loader.getCodemods()) {
+        CodemodExecutor executor =
+            new DefaultCodemodExecutor(
+                tmpDir,
+                IncludesExcludes.any(),
+                codemodIdPair,
+                List.of(),
+                List.of(),
+                FileCache.createDefault(),
+                JavaParserFacade.from(JavaParser::new),
+                EncodingDetector.create(),
+                -1,
+                -1,
+                -1);
+        executor.execute(List.of(file));
+      }
 
-    for (CodemodIdPair codemodIdPair : loader.getCodemods()) {
-      CodemodExecutor executor =
-          new DefaultCodemodExecutor(
-              tmpDir,
-              IncludesExcludes.any(),
-              codemodIdPair,
-              List.of(),
-              List.of(),
-              CachingJavaParser.from(new JavaParser()),
-              EncodingDetector.create());
-      executor.execute(List.of(file));
+      String contents = Files.readString(file);
+      assertThat(contents, equalTo("a\nb\nc\nd\n"));
     }
-
-    String contents = Files.readString(file);
-    assertThat(contents, equalTo("a\nb\nc\n"));
   }
 
   @Codemod(
       id = "pixee:java/parameterized",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class ParameterizedCodemod extends RawFileChanger {
     private final Parameter parameter;
@@ -240,7 +305,7 @@ final class CodemodLoaderTest {
 
     // first, we run without any parameters and ensure we get the right stuff
     {
-      CodemodLoader loader = new CodemodLoader(codemods, tmpDir);
+      CodemodLoader loader = createLoader(codemods, tmpDir);
       CodemodIdPair pair = loader.getCodemods().get(0);
       ParameterizedCodemod changer = (ParameterizedCodemod) pair.getChanger();
       assertThat(changer.parameter.getDefaultValue(), equalTo("123"));
@@ -252,7 +317,7 @@ final class CodemodLoaderTest {
     {
       String paramArg = "codemod=pixee:java/parameterized,name=my-param-number,value=456";
       ParameterArgument param = ParameterArgument.fromNameValuePairs(paramArg);
-      CodemodLoader loader = new CodemodLoader(codemods, tmpDir, List.of(param));
+      CodemodLoader loader = createLoader(codemods, tmpDir, List.of(param));
       CodemodIdPair pair = loader.getCodemods().get(0);
       ParameterizedCodemod changer = (ParameterizedCodemod) pair.getChanger();
       assertThat(changer.parameter.getDefaultValue(), equalTo("456"));
@@ -267,7 +332,7 @@ final class CodemodLoaderTest {
       String paramArg =
           "codemod=pixee:java/parameterized,name=my-param-number,value=456,file=src/main/java/Foo.java";
       ParameterArgument param = ParameterArgument.fromNameValuePairs(paramArg);
-      CodemodLoader loader = new CodemodLoader(codemods, tmpDir, List.of(param));
+      CodemodLoader loader = createLoader(codemods, tmpDir, List.of(param));
       CodemodIdPair pair = loader.getCodemods().get(0);
       ParameterizedCodemod changer = (ParameterizedCodemod) pair.getChanger();
 
@@ -286,7 +351,7 @@ final class CodemodLoaderTest {
       String paramArg =
           "codemod=pixee:java/parameterized,name=my-param-number,value=456,file=src/main/java/Foo.java,line=5";
       ParameterArgument param = ParameterArgument.fromNameValuePairs(paramArg);
-      CodemodLoader loader = new CodemodLoader(codemods, tmpDir, List.of(param));
+      CodemodLoader loader = createLoader(codemods, tmpDir, List.of(param));
       CodemodIdPair pair = loader.getCodemods().get(0);
       ParameterizedCodemod changer = (ParameterizedCodemod) pair.getChanger();
 
@@ -307,8 +372,12 @@ final class CodemodLoaderTest {
               pair,
               List.of(),
               List.of(),
-              CachingJavaParser.from(new JavaParser()),
-              EncodingDetector.create());
+              FileCache.createDefault(),
+              JavaParserFacade.from(JavaParser::new),
+              EncodingDetector.create(),
+              -1,
+              -1,
+              -1);
       Path p = tmpDir.resolve("foo.txt");
       Files.writeString(p, "1\n2\n3");
       CodeTFResult result = executor.execute(List.of(p));
@@ -325,5 +394,50 @@ final class CodemodLoaderTest {
       assertThat(parameter.getDefaultValue(), equalTo("123"));
       assertThat(parameter.getQuestion(), equalTo("What do you want the number to be?"));
     }
+  }
+
+  private CodemodLoader createLoader(final Class<? extends CodeChanger> codemodType, final Path dir)
+      throws IOException {
+    return new CodemodLoader(
+        List.of(codemodType),
+        CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+        dir,
+        List.of("**"),
+        List.of(),
+        Files.list(dir).toList(),
+        Map.of(),
+        List.of(),
+        null);
+  }
+
+  private CodemodLoader createLoader(
+      final List<Class<? extends CodeChanger>> codemodTypes, final Path dir) throws IOException {
+    return new CodemodLoader(
+        codemodTypes,
+        CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+        dir,
+        List.of("**"),
+        List.of(),
+        Files.list(dir).toList(),
+        Map.of(),
+        List.of(),
+        null);
+  }
+
+  private CodemodLoader createLoader(
+      final List<Class<? extends CodeChanger>> codemodTypes,
+      final Path dir,
+      final List<ParameterArgument> params)
+      throws IOException {
+    return new CodemodLoader(
+        codemodTypes,
+        CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+        dir,
+        List.of("**"),
+        List.of(),
+        Files.list(dir).toList(),
+        Map.of(),
+        params,
+        null);
   }
 }

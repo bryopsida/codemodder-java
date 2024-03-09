@@ -5,6 +5,13 @@ plugins {
 
 description = "Base framework for writing codemods in Java"
 
+// add the project version to the manifest
+tasks.jar {
+    manifest {
+        attributes["Implementation-Version"] = version
+    }
+}
+
 dependencies {
     compileOnly(libs.jetbrains.annotations)
 
@@ -14,7 +21,7 @@ dependencies {
     api(libs.java.security.toolkit)
     api(libs.commons.lang3)
 
-    api("io.codemodder:codetf-java:2.1.2")
+    api("io.codemodder:codetf-java:3.0.1")
     api(libs.slf4j.api)
     api(libs.javaparser.core)
     api(libs.javaparser.symbolsolver.core)
@@ -27,6 +34,7 @@ dependencies {
 
     implementation(libs.tuples)
     implementation(libs.logback.classic)
+    implementation(libs.logstash.logback.encoder)
     implementation(libs.maven.model)
     implementation(libs.picocli)
     implementation(libs.juniversalchardet)

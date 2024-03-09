@@ -10,7 +10,7 @@ import io.codemodder.*;
 import io.codemodder.codetf.CodeTFChange;
 import io.codemodder.codetf.CodeTFChangesetEntry;
 import io.codemodder.codetf.CodeTFResult;
-import io.codemodder.javaparser.CachingJavaParser;
+import io.codemodder.javaparser.JavaParserFacade;
 import io.codemodder.javaparser.JavaParserFactory;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -83,14 +83,6 @@ public interface CodemodTestMixin {
     Path pathToJavaFile = tmpDir.resolve("Test.java");
     Files.copy(before, pathToJavaFile, StandardCopyOption.REPLACE_EXISTING);
 
-    // Check for any sarif files and build the RuleSarif map
-    List<Path> allSarifs = new ArrayList<>();
-    Files.newDirectoryStream(testResourceDir, "*.sarif")
-        .iterator()
-        .forEachRemaining(allSarifs::add);
-
-    Map<String, List<RuleSarif>> map = SarifParser.create().parseIntoMap(allSarifs, tmpDir);
-
     // rename file if needed
     if (!renameTestFile.isBlank()) {
       Path parent = tmpDir.resolve(renameTestFile).getParent();
@@ -102,8 +94,28 @@ public interface CodemodTestMixin {
       pathToJavaFile = newPathToJavaFile;
     }
 
+    // add the sonar JSON if one exists
+    Path sonarJson = testResourceDir.resolve("sonar-issues.json");
+
+    // Check for any sarif files and build the RuleSarif map
+    List<Path> allSarifs = new ArrayList<>();
+    Files.newDirectoryStream(testResourceDir, "*.sarif")
+        .iterator()
+        .forEachRemaining(allSarifs::add);
+    Map<String, List<RuleSarif>> map = SarifParser.create().parseIntoMap(allSarifs, tmpDir);
+
     // run the codemod
-    CodemodLoader loader = new CodemodLoader(List.of(codemodType), tmpDir, map);
+    CodemodLoader loader =
+        new CodemodLoader(
+            List.of(codemodType),
+            CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+            tmpDir,
+            List.of("**"),
+            List.of(),
+            List.of(pathToJavaFile),
+            map,
+            List.of(),
+            Files.exists(sonarJson) ? sonarJson : null);
 
     List<CodemodIdPair> codemods = loader.getCodemods();
     assertThat(codemods.size(), equalTo(1));
@@ -111,13 +123,21 @@ public interface CodemodTestMixin {
     JavaParserFactory factory = JavaParserFactory.newFactory();
     SourceDirectory dir = SourceDirectory.createDefault(tmpDir, List.of(pathToJavaFile.toString()));
     CodemodExecutor executor =
-        CodemodExecutor.from(
+        CodemodExecutorFactory.from(
             tmpDir,
             IncludesExcludes.any(),
             codemod,
             List.of(),
             List.of(),
-            CachingJavaParser.from(factory.create(List.of(dir))),
+            FileCache.createDefault(),
+            JavaParserFacade.from(
+                () -> {
+                  try {
+                    return factory.create(List.of(dir));
+                  } catch (IOException e) {
+                    throw new RuntimeException(e);
+                  }
+                }),
             EncodingDetector.create());
     CodeTFResult result = executor.execute(List.of(pathToJavaFile));
     List<CodeTFChangesetEntry> changeset = result.getChangeset();
@@ -162,16 +182,34 @@ public interface CodemodTestMixin {
     String codeAfterFirstTransform = Files.readString(pathToJavaFile);
 
     // re-run the transformation again and make sure no changes are made
-    CodemodLoader loader2 = new CodemodLoader(List.of(codemodType), tmpDir, map);
+    CodemodLoader loader2 =
+        new CodemodLoader(
+            List.of(codemodType),
+            CodemodRegulator.of(DefaultRuleSetting.ENABLED, List.of()),
+            tmpDir,
+            List.of("**"),
+            List.of(),
+            List.of(pathToJavaFile),
+            map,
+            List.of(),
+            null);
     CodemodIdPair codemod2 = loader2.getCodemods().get(0);
     CodemodExecutor executor2 =
-        CodemodExecutor.from(
+        CodemodExecutorFactory.from(
             tmpDir,
             IncludesExcludes.any(),
             codemod2,
             List.of(),
             List.of(),
-            CachingJavaParser.from(factory.create(List.of(dir))),
+            FileCache.createDefault(),
+            JavaParserFacade.from(
+                () -> {
+                  try {
+                    return factory.create(List.of(dir));
+                  } catch (IOException e) {
+                    throw new RuntimeException(e);
+                  }
+                }),
             EncodingDetector.create());
     CodeTFResult result2 = executor2.execute(List.of(pathToJavaFile));
     List<CodeTFChangesetEntry> changeset2 = result2.getChangeset();

@@ -15,8 +15,8 @@ import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import io.codemodder.codetf.*;
-import io.codemodder.javaparser.CachingJavaParser;
 import io.codemodder.javaparser.JavaParserChanger;
+import io.codemodder.javaparser.JavaParserFacade;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -36,19 +36,21 @@ final class DefaultCodemodExecutorTest {
   private Path javaFile3;
   private Path javaFile4;
   private EncodingDetector encodingDetector;
-  private CachingJavaParser cachingJavaParser;
+  private JavaParserFacade javaParserFacade;
   private IncludesExcludes includesEverything;
   private BeforeToAfterChanger beforeToAfterChanger;
   private CodemodIdPair beforeAfterCodemod;
+  private FileCache fileCache;
 
   @BeforeEach
   void setup(final @TempDir Path tmpDir) throws IOException {
     this.repoDir = tmpDir;
     beforeToAfterChanger = new BeforeToAfterChanger();
     beforeAfterCodemod = new CodemodIdPair("codemodder:java/id", beforeToAfterChanger);
-    cachingJavaParser = CachingJavaParser.from(new JavaParser());
+    javaParserFacade = JavaParserFacade.from(JavaParser::new);
     encodingDetector = EncodingDetector.create();
     includesEverything = IncludesExcludes.any();
+    fileCache = FileCache.createDefault();
     executor =
         new DefaultCodemodExecutor(
             repoDir,
@@ -56,8 +58,12 @@ final class DefaultCodemodExecutorTest {
             beforeAfterCodemod,
             List.of(),
             List.of(),
-            cachingJavaParser,
-            encodingDetector);
+            fileCache,
+            javaParserFacade,
+            encodingDetector,
+            -1,
+            -1,
+            -1);
 
     javaFile1 = repoDir.resolve("Test1.java");
     Files.write(javaFile1, List.of("class Test1 {", "  void before() {}", "}"));
@@ -128,8 +134,8 @@ final class DefaultCodemodExecutorTest {
               oldDeps.size() + 1,
               Collections.emptyMap(),
               "updated deps",
+              CodeTFDiffSide.LEFT,
               List.of(packageAddResult),
-              null,
               List.of());
       CodeTFChangesetEntry entry = new CodeTFChangesetEntry("deps.txt", diff, List.of(change));
       List<CodeTFChangesetEntry> changes = List.of(entry);
@@ -180,8 +186,12 @@ final class DefaultCodemodExecutorTest {
             beforeAfterCodemod,
             List.of(),
             List.of(addsPrefixProvider),
-            cachingJavaParser,
-            encodingDetector);
+            fileCache,
+            javaParserFacade,
+            encodingDetector,
+            -1,
+            -1,
+            -1);
 
     CodeTFResult result = executor.execute(List.of(javaFile1));
 
@@ -215,6 +225,62 @@ final class DefaultCodemodExecutorTest {
   }
 
   @Test
+  void it_respects_max_files() {
+    executor =
+        new DefaultCodemodExecutor(
+            repoDir,
+            includesEverything,
+            beforeAfterCodemod,
+            List.of(),
+            List.of(),
+            fileCache,
+            javaParserFacade,
+            encodingDetector,
+            -1,
+            1,
+            -1);
+
+    CodeTFResult result = executor.execute(List.of(javaFile1, javaFile2, javaFile3));
+    assertThat(result).satisfies(DefaultCodemodExecutorTest::hasBeforeAfterCodemodMetadata);
+
+    // should have only 1 entry for javaFile1 because we only allow scanning 1 file
+    List<CodeTFChangesetEntry> changeset = result.getChangeset();
+    assertThat(changeset.size()).isEqualTo(1);
+    assertThat(changeset.get(0)).satisfies(DefaultCodemodExecutorTest::isJavaFile1ChangedCorrectly);
+  }
+
+  @Test
+  void it_respects_max_file_size() throws IOException {
+    executor =
+        new DefaultCodemodExecutor(
+            repoDir,
+            includesEverything,
+            beforeAfterCodemod,
+            List.of(),
+            List.of(),
+            fileCache,
+            javaParserFacade,
+            encodingDetector,
+            500,
+            -1,
+            -1);
+
+    // make javaFile1 too big to scan
+    String javaFile1Contents = Files.readString(javaFile1);
+    javaFile1Contents = " ".repeat(1000) + javaFile1Contents;
+    Files.writeString(javaFile1, javaFile1Contents);
+
+    // scan like normal
+    CodeTFResult result = executor.execute(List.of(javaFile1, javaFile2, javaFile3));
+    assertThat(result).satisfies(DefaultCodemodExecutorTest::hasBeforeAfterCodemodMetadata);
+
+    // should have only 1 entry for javaFile3 because javaFile1 is too big
+    List<CodeTFChangesetEntry> changeset = result.getChangeset();
+    assertThat(changeset.size()).isEqualTo(1);
+    assertThat(changeset.get(0)).satisfies(DefaultCodemodExecutorTest::isJavaFile3ChangedCorrectly);
+  }
+
+  @Test
   void it_reports_failed_files() throws IOException {
     // make the java1 file not parseable so we can confirm errors reported correctly
     Files.writeString(javaFile1, "this is not java code");
@@ -244,8 +310,12 @@ final class DefaultCodemodExecutorTest {
               codemod,
               List.of(depsProvider),
               List.of(),
-              CachingJavaParser.from(new JavaParser()),
-              EncodingDetector.create());
+              fileCache,
+              JavaParserFacade.from(JavaParser::new),
+              EncodingDetector.create(),
+              -1,
+              -1,
+              -1);
       CodeTFResult result = executor.execute(List.of(javaFile2, javaFile4));
       results.add(result);
     }
@@ -270,7 +340,6 @@ final class DefaultCodemodExecutorTest {
     assertThat(javaFile2Entry.getChanges()).hasSize(1);
     CodeTFChange firstCodeChange = javaFile2Entry.getChanges().get(0);
     assertThat(firstCodeChange.getLineNumber()).isEqualTo(2);
-    assertThat(firstCodeChange.getSourceControlUrl()).isNull();
     assertThat(firstCodeChange.getDescription()).isEqualTo("injects-dependency-1-change");
     List<CodeTFPackageAction> javaFile2PackageActions = firstCodeChange.getPackageActions();
     assertThat(javaFile2PackageActions.size()).isEqualTo(1);
@@ -327,7 +396,6 @@ final class DefaultCodemodExecutorTest {
                 + " }");
 
     CodeTFChange secondCodeChange = javaFile4Entry.getChanges().get(0);
-    assertThat(secondCodeChange.getSourceControlUrl()).isEqualTo("https://dep2-control.com/src");
     List<CodeTFPackageAction> javaFile4PackageActions = secondCodeChange.getPackageActions();
     assertThat(javaFile4PackageActions.size()).isEqualTo(1);
     assertThat(javaFile4PackageActions.get(0).getAction())
@@ -371,8 +439,12 @@ final class DefaultCodemodExecutorTest {
             codemod,
             List.of(badProvider),
             List.of(),
-            CachingJavaParser.from(new JavaParser()),
-            EncodingDetector.create());
+            fileCache,
+            JavaParserFacade.from(JavaParser::new),
+            EncodingDetector.create(),
+            -1,
+            -1,
+            -1);
     CodeTFResult result = executor.execute(List.of(javaFile2, javaFile4));
     List<CodeTFChangesetEntry> firstChangeset = result.getChangeset();
 
@@ -423,8 +495,12 @@ final class DefaultCodemodExecutorTest {
             codemod,
             List.of(skippingProvider),
             List.of(),
-            CachingJavaParser.from(new JavaParser()),
-            EncodingDetector.create());
+            fileCache,
+            JavaParserFacade.from(JavaParser::new),
+            EncodingDetector.create(),
+            -1,
+            -1,
+            -1);
     CodeTFResult result = executor.execute(List.of(javaFile2));
     List<CodeTFChangesetEntry> firstChangeset = result.getChangeset();
 
@@ -470,7 +546,7 @@ final class DefaultCodemodExecutorTest {
     CodeTFChange change = entry.getChanges().get(0);
     assertThat(change.getLineNumber()).isEqualTo(2);
     assertThat(change.getPackageActions()).isEmpty();
-    assertThat(change.getDescription()).isEqualTo("");
+    assertThat(change.getDescription()).isEqualTo("some description");
     assertThat(entry.getDiff())
         .isEqualTo(
             "--- Test1.java\n"
@@ -488,7 +564,7 @@ final class DefaultCodemodExecutorTest {
     CodeTFChange change = entry.getChanges().get(0);
     assertThat(change.getLineNumber()).isEqualTo(3);
     assertThat(change.getPackageActions()).isEmpty();
-    assertThat(change.getDescription()).isEqualTo("");
+    assertThat(change.getDescription()).isEqualTo("some description");
     assertThat(entry.getDiff())
         .isEqualTo(
             "--- Test3.java\n"
@@ -539,7 +615,7 @@ final class DefaultCodemodExecutorTest {
 
     @Override
     public String getIndividualChangeDescription(Path filePath, CodemodChange change) {
-      return "";
+      return "some description";
     }
   }
 
@@ -576,11 +652,6 @@ final class DefaultCodemodExecutorTest {
     @Override
     public List<CodeTFReference> getReferences() {
       return List.of(new CodeTFReference("https://dep1.com/", "https://dep1.com/"));
-    }
-
-    @Override
-    public Optional<String> getSourceControlUrl() {
-      return Optional.empty();
     }
 
     @Override
@@ -622,11 +693,6 @@ final class DefaultCodemodExecutorTest {
     @Override
     public List<CodeTFReference> getReferences() {
       return List.of(new CodeTFReference("https://dep2.com/", "https://dep2.com/"));
-    }
-
-    @Override
-    public Optional<String> getSourceControlUrl() {
-      return Optional.of("https://dep2-control.com/src");
     }
 
     @Override

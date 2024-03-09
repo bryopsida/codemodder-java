@@ -11,7 +11,11 @@ import java.security.SecureRandom;
 import javax.inject.Inject;
 
 /** Turns {@link java.util.Random} into {@link java.security.SecureRandom}. */
-@Codemod(id = "pixee:java/secure-random", reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW)
+@Codemod(
+    id = "pixee:java/secure-random",
+    reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW,
+    importance = Importance.MEDIUM,
+    executionPriority = CodemodExecutionPriority.LOW)
 public final class SecureRandomCodemod extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
 
   private static final String DETECTION_RULE =

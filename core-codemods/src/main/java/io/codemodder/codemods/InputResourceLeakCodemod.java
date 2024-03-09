@@ -13,13 +13,15 @@ import javax.inject.Inject;
  */
 @Codemod(
     id = "codeql:java/input-resource-leak",
-    reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW)
+    reviewGuidance = ReviewGuidance.MERGE_WITHOUT_REVIEW,
+    importance = Importance.MEDIUM,
+    executionPriority = CodemodExecutionPriority.HIGH)
 public final class InputResourceLeakCodemod extends SarifPluginJavaParserChanger<Expression> {
 
   @Inject
   public InputResourceLeakCodemod(
       @ProvidedCodeQLScan(ruleId = "java/input-resource-leak") final RuleSarif sarif) {
-    super(sarif, Expression.class, RegionExtractor.FROM_FIRST_LOCATION);
+    super(sarif, Expression.class, SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION);
   }
 
   @Override

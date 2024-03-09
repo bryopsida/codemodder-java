@@ -160,7 +160,7 @@ public interface DependencyGAV {
         group, artifact, version, justification, license, repositoryUrl, noTransitiveDependencies);
   }
 
-  String JAVA_SECURITY_TOOLKIT_VERSION = "1.0.7";
+  String JAVA_SECURITY_TOOLKIT_VERSION = "1.1.3";
   String JAVA_SECURITY_TOOLKIT_GAV =
       "io.github.pixee:java-security-toolkit:" + JAVA_SECURITY_TOOLKIT_VERSION;
 
@@ -175,7 +175,7 @@ public interface DependencyGAV {
           "This library holds security tools for protecting Java API calls.",
           DependencyLicenses.MIT,
           "https://github.com/pixee/java-security-toolkit",
-          true);
+          false);
 
   /** There are multiple XSS rules require an XSS encoder. */
   DependencyGAV OWASP_XSS_JAVA_ENCODER =

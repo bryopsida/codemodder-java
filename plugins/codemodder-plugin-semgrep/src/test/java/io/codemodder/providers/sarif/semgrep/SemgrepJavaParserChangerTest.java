@@ -32,7 +32,9 @@ final class SemgrepJavaParserChangerTest {
     String javaCode = "class Foo { \n\n  Object a = new Stuff();\n  Object b = new That();\n }";
     Path javaFile = writeJavaFile(tmpDir, javaCode);
 
-    SemgrepModule module = new SemgrepModule(tmpDir, List.of(UsesInlineSemgrepCodemod.class));
+    SemgrepModule module =
+        new SemgrepModule(
+            tmpDir, List.of("**"), List.of(), List.of(UsesInlineSemgrepCodemod.class));
     Injector injector = Guice.createInjector(module);
     UsesInlineSemgrepCodemod instance = injector.getInstance(UsesInlineSemgrepCodemod.class);
     RuleSarif ruleSarif = instance.sarif;
@@ -42,7 +44,10 @@ final class SemgrepJavaParserChangerTest {
 
   @Test
   void it_fails_when_both_used(@TempDir Path tmpDir) {
-    SemgrepModule module = new SemgrepModule(tmpDir, List.of(InvalidUsesBothYamlStrategies.class));
+    SemgrepModule module =
+        new SemgrepModule(
+            tmpDir, List.of("**"), List.of(), List.of(InvalidUsesBothYamlStrategies.class));
+
     assertThrows(CreationException.class, () -> Guice.createInjector(module));
   }
 
@@ -54,6 +59,7 @@ final class SemgrepJavaParserChangerTest {
 
   @Codemod(
       id = "pixee-test:java/uses-inline-semgrep",
+      importance = Importance.LOW,
       reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
   static class UsesInlineSemgrepCodemod extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
 
@@ -64,7 +70,7 @@ final class SemgrepJavaParserChangerTest {
       super(
           ruleSarif,
           ObjectCreationExpr.class,
-          RegionExtractor.FROM_FIRST_LOCATION,
+          SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION,
           RegionNodeMatcher.EXACT_MATCH,
           CodemodReporterStrategy.empty());
     }

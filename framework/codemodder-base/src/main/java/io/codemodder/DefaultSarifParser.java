@@ -1,5 +1,6 @@
 package io.codemodder;
 
+import com.contrastsecurity.sarif.ReportingDescriptor;
 import com.contrastsecurity.sarif.Result;
 import com.contrastsecurity.sarif.Run;
 import com.contrastsecurity.sarif.SarifSchema210;
@@ -8,7 +9,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,7 +52,7 @@ final class DefaultSarifParser implements SarifParser {
               .skip(toolIndex)
               .findFirst()
               .flatMap(tool -> tool.getRules().stream().skip(ruleIndex).findFirst())
-              .map(rd -> rd.getId());
+              .map(ReportingDescriptor::getId);
       if (maybeRule.isPresent()) {
         return maybeRule.get();
       } else {
@@ -70,12 +70,15 @@ final class DefaultSarifParser implements SarifParser {
     final List<RuleSarifFactory> factories =
         ServiceLoader.load(RuleSarifFactory.class).stream()
             .map(ServiceLoader.Provider::get)
-            .collect(Collectors.toUnmodifiableList());
+            .toList();
+    final var runResults = run.getResults();
     final var allResults =
-        run.getResults().stream()
-            .map(result -> extractRuleId(result, run))
-            .filter(Objects::nonNull)
-            .distinct();
+        runResults != null
+            ? runResults.stream()
+                .map(result -> extractRuleId(result, run))
+                .filter(Objects::nonNull)
+                .distinct()
+            : Stream.<String>empty();
 
     return allResults.flatMap(
         rule -> tryToBuild(toolName, rule, sarif, repositoryRoot, factories).stream());

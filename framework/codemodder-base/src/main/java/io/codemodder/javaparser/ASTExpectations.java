@@ -2,8 +2,10 @@ package io.codemodder.javaparser;
 
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.stmt.BlockStmt;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
@@ -71,9 +73,134 @@ public final class ASTExpectations {
       return new VariableDeclarationExprExpectation(vde);
     }
 
+    /** Return an expectation that asserts the node is a {@link MethodCallExpr}. */
+    public MethodCallExpectation toBeMethodCallExpression() {
+      if (nodeRef.isEmpty() || !(nodeRef.get() instanceof MethodCallExpr)) {
+        return new MethodCallExpectation(Optional.empty());
+      }
+      return new MethodCallExpectation(Optional.of((MethodCallExpr) nodeRef.get()));
+    }
+
+    /** Return an expectation that asserts the node is a {@link ExpressionStmt}. */
+    public ExpressionStatementExpectation toBeExpressionStatement() {
+      if (nodeRef.isEmpty() || !(nodeRef.get() instanceof ExpressionStmt)) {
+        return new ExpressionStatementExpectation(Optional.empty());
+      }
+      return new ExpressionStatementExpectation(Optional.of((ExpressionStmt) nodeRef.get()));
+    }
+
+    /** Return an expectation that asserts the node is a {@link NameExpr}. */
+    public NameExpressionExpectation toBeNameExpression() {
+      if (nodeRef.isEmpty() || !(nodeRef.get() instanceof NameExpr)) {
+        return new NameExpressionExpectation(Optional.empty());
+      }
+      return new NameExpressionExpectation(Optional.of((NameExpr) nodeRef.get()));
+    }
+
+    /** Return an expectation that asserts the node is a {@link FieldAccessExpr}. */
+    public FieldAccessExpectation toBeFieldAccessExpression() {
+      if (nodeRef.isEmpty() || !(nodeRef.get() instanceof FieldAccessExpr)) {
+        return new FieldAccessExpectation(Optional.empty());
+      }
+      return new FieldAccessExpectation(Optional.of((FieldAccessExpr) nodeRef.get()));
+    }
+
+    public StringLiteralExpectation toBeStringLiteral() {
+      if (nodeRef.isEmpty() || !(nodeRef.get() instanceof StringLiteralExpr)) {
+        return new StringLiteralExpectation(Optional.empty());
+      }
+      return new StringLiteralExpectation(Optional.of((StringLiteralExpr) nodeRef.get()));
+    }
+
     @Override
     public Optional<Node> result() {
       return nodeRef;
+    }
+  }
+
+  /** A type for querying and filtering name expressions. */
+  public static class FieldAccessExpectation implements ASTExpectationProducer<FieldAccessExpr> {
+    private final Optional<FieldAccessExpr> name;
+
+    private FieldAccessExpectation(final Optional<FieldAccessExpr> name) {
+      this.name = Objects.requireNonNull(name);
+    }
+
+    @Override
+    public Optional<FieldAccessExpr> result() {
+      return name;
+    }
+  }
+
+  /** A type for querying and filtering name expressions. */
+  public static class NameExpressionExpectation implements ASTExpectationProducer<NameExpr> {
+    private final Optional<NameExpr> name;
+
+    private NameExpressionExpectation(final Optional<NameExpr> name) {
+      this.name = Objects.requireNonNull(name);
+    }
+
+    @Override
+    public Optional<NameExpr> result() {
+      return name;
+    }
+  }
+
+  /** A type for querying and filtering string literals. */
+  public static class StringLiteralExpectation
+      implements ASTExpectationProducer<StringLiteralExpr> {
+
+    private final Optional<StringLiteralExpr> stringLiteralExpr;
+
+    public StringLiteralExpectation(final Optional<StringLiteralExpr> stringLiteralExpr) {
+      this.stringLiteralExpr = stringLiteralExpr;
+    }
+
+    @Override
+    public Optional<StringLiteralExpr> result() {
+      return stringLiteralExpr;
+    }
+  }
+
+  /** A type for querying and filtering expression statements. */
+  public static class ExpressionStatementExpectation
+      implements ASTExpectationProducer<ExpressionStmt> {
+    private final Optional<ExpressionStmt> expressionStmtRef;
+
+    private ExpressionStatementExpectation(final Optional<ExpressionStmt> expr) {
+      this.expressionStmtRef = expr;
+    }
+
+    @Override
+    public Optional<ExpressionStmt> result() {
+      return expressionStmtRef;
+    }
+
+    public LocalVariableDeclaratorExpectation withSingleVariableDeclarationExpression() {
+      if (expressionStmtRef.isEmpty()) {
+        return new LocalVariableDeclaratorExpectation(Optional.empty());
+      }
+      ExpressionStmt expressionStmt = expressionStmtRef.get();
+      if (expressionStmt.getExpression() instanceof VariableDeclarationExpr) {
+        VariableDeclarationExpr declarationExpr =
+            expressionStmt.getExpression().asVariableDeclarationExpr();
+        if (declarationExpr.getVariables().size() == 1) {
+          return new LocalVariableDeclaratorExpectation(
+              Optional.of(declarationExpr.getVariable(0)));
+        }
+      }
+      return new LocalVariableDeclaratorExpectation(Optional.empty());
+    }
+
+    public MethodCallExpectation withMethodCallExpression() {
+      if (expressionStmtRef.isPresent()) {
+        ExpressionStmt expressionStmt = expressionStmtRef.get();
+        if (expressionStmt.getExpression() instanceof MethodCallExpr) {
+          return new MethodCallExpectation(
+              Optional.of(expressionStmt.getExpression().asMethodCallExpr()));
+        }
+      }
+      return new MethodCallExpectation(Optional.empty());
     }
   }
 
@@ -82,7 +209,7 @@ public final class ASTExpectations {
       implements ASTExpectationProducer<VariableDeclarationExpr> {
     private Optional<VariableDeclarationExpr> varDefExprRef;
 
-    public VariableDeclarationExprExpectation(final Optional<VariableDeclarationExpr> expr) {
+    private VariableDeclarationExprExpectation(final Optional<VariableDeclarationExpr> expr) {
       this.varDefExprRef = expr;
     }
 
@@ -167,7 +294,7 @@ public final class ASTExpectations {
 
   /** A type for querying and filtering method call expressions. */
   public static class MethodCallExpectation implements ASTExpectationProducer<MethodCallExpr> {
-    private final Optional<MethodCallExpr> methodCallExpr;
+    private Optional<MethodCallExpr> methodCallExpr;
 
     public MethodCallExpectation(final Optional<MethodCallExpr> methodCallExpr) {
       this.methodCallExpr = Objects.requireNonNull(methodCallExpr);
@@ -176,6 +303,39 @@ public final class ASTExpectations {
     @Override
     public Optional<MethodCallExpr> result() {
       return methodCallExpr;
+    }
+
+    public MethodCallExpectation withArgumentsSize(final int expectedSize) {
+      if (methodCallExpr.isEmpty()) {
+        return this;
+      }
+      MethodCallExpr callExpr = methodCallExpr.get();
+      if (callExpr.getArguments().size() != expectedSize) {
+        methodCallExpr = Optional.empty();
+      }
+      return this;
+    }
+
+    public MethodCallExpectation withName(final String expectedName) {
+      if (methodCallExpr.isEmpty()) {
+        return this;
+      }
+      MethodCallExpr callExpr = methodCallExpr.get();
+      if (!expectedName.equals(callExpr.getNameAsString())) {
+        methodCallExpr = Optional.empty();
+      }
+      return this;
+    }
+
+    public MethodCallExpectation withArguments() {
+      if (methodCallExpr.isEmpty()) {
+        return this;
+      }
+      MethodCallExpr callExpr = methodCallExpr.get();
+      if (callExpr.getArguments().isEmpty()) {
+        methodCallExpr = Optional.empty();
+      }
+      return this;
     }
   }
 }

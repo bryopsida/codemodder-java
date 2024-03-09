@@ -42,7 +42,6 @@ final class WebGoat822Test extends GitRepositoryTest {
           "**/InsecureDeserializationTask.java",
           "--output",
           outputFile.getPath(),
-          "--verbose",
           "--dont-exit",
           repoDir.getPath()
         });
@@ -56,7 +55,7 @@ final class WebGoat822Test extends GitRepositoryTest {
     assertThat(results.size(), is(1));
     CodeTFResult result = results.get(0);
     List<CodeTFChangesetEntry> changeset = result.getChangeset();
-    assertThat(changeset.size(), is(2));
+    assertThat(changeset.size(), is(3));
     assertThat(
         changeset.get(0).getPath(),
         equalTo(
@@ -96,7 +95,7 @@ final class WebGoat822Test extends GitRepositoryTest {
             .flatMap(Collection::stream)
             .collect(Collectors.toList());
 
-    assertThat(fileChanges.size(), is(43));
+    assertThat(fileChanges.size(), is(56));
 
     // we only inject into a couple files
     verifyStandardCodemodResults(fileChanges);
@@ -118,7 +117,6 @@ final class WebGoat822Test extends GitRepositoryTest {
           outputFile.getPath(),
           "--sarif",
           "src/test/resources/webgoat_v8.2.2_codeql.sarif",
-          "--verbose",
           "--dont-exit",
           repoDir.getPath()
         });
@@ -135,7 +133,7 @@ final class WebGoat822Test extends GitRepositoryTest {
             .flatMap(Collection::stream)
             .collect(Collectors.toList());
 
-    assertThat(fileChanges.size(), is(48));
+    assertThat(fileChanges.size(), is(60));
 
     verifyStandardCodemodResults(fileChanges);
 

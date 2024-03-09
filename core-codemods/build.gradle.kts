@@ -2,6 +2,7 @@ plugins {
     id("io.codemodder.java-library")
     id("io.codemodder.runner")
     id("io.codemodder.maven-publish")
+    id("io.codemodder.core-codemods-docs")
     `jvm-test-suite`
 }
 
@@ -21,6 +22,7 @@ dependencies {
     implementation(project(":plugins:codemodder-plugin-llm"))
     implementation(project(":plugins:codemodder-plugin-aws"))
     implementation(project(":plugins:codemodder-plugin-pmd"))
+    implementation(project(":plugins:codemodder-plugin-sonar"))
     implementation(libs.juniversalchardet)
     implementation(libs.dom4j)
     implementation(libs.commons.jexl)
@@ -33,6 +35,7 @@ dependencies {
     testImplementation(project(":framework:codemodder-testutils-llm"))
     testRuntimeOnly(testlibs.junit.jupiter.engine)
     testImplementation(testlibs.jgit)
+    testImplementation("org.testcontainers:testcontainers:1.19.0")
 }
 
 val integrationTestSuiteName = "intTest"
@@ -65,4 +68,33 @@ testing {
 tasks.named("check") {
     @Suppress("UnstableApiUsage")
     dependsOn(testing.suites.named(integrationTestSuiteName))
+}
+
+val getTestProjectNames by tasks.registering {
+    group = "custom"
+    description = "Extracts codemodIds from IntegrationTestMetadata"
+
+    val sourceDir = file("src/test/java/io/codemodder/codemods/integration/tests")
+    val codemodIdRegex = """codemodId\s*=\s*["']([^"']+)["']""".toRegex()
+
+    doLast {
+        val codemodIds = mutableListOf<String>()
+        sourceDir
+            .walkTopDown()
+            .filter { it.isFile && it.name.endsWith(".java") }
+            .forEach { file ->
+                val content = file.readText()
+                val matchResult = codemodIdRegex.find(content)
+
+                if (matchResult != null) {
+                    codemodIds.add(matchResult.groupValues[1])
+                }
+            }
+
+        println(codemodIds.joinToString(" "))
+    }
+}
+
+tasks.withType(JavaCompile::class) {
+    dependsOn(getTestProjectNames)
 }

@@ -13,6 +13,7 @@ import javax.inject.Inject;
  */
 @Codemod(
     id = "pixee-test:java/both-yaml",
+    importance = Importance.LOW,
     reviewGuidance = ReviewGuidance.MERGE_AFTER_CURSORY_REVIEW)
 public final class InvalidUsesBothYamlStrategies
     extends SarifPluginJavaParserChanger<ObjectCreationExpr> {
@@ -30,7 +31,7 @@ public final class InvalidUsesBothYamlStrategies
     super(
         ruleSarif,
         ObjectCreationExpr.class,
-        RegionExtractor.FROM_FIRST_LOCATION,
+        SourceCodeRegionExtractor.FROM_SARIF_FIRST_LOCATION,
         RegionNodeMatcher.EXACT_MATCH,
         CodemodReporterStrategy.empty());
   }

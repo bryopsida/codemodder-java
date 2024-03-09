@@ -5,6 +5,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.FileAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.javaparser.JavaParser;
 import com.github.javaparser.ast.CompilationUnit;
@@ -31,6 +35,7 @@ final class CLITest {
   private Path workingRepoDir;
   private Path fooJavaFile;
   private Path barJavaFile;
+  private Path testFile;
   private List<SourceDirectory> sourceDirectories;
 
   @BeforeEach
@@ -42,10 +47,12 @@ final class CLITest {
         Files.createDirectories(tmpDir.resolve("module2/src/main/java/com/acme/util/"));
     fooJavaFile = module1JavaDir.resolve("Foo.java");
     barJavaFile = module2JavaDir.resolve("Bar.java");
+    testFile = module2JavaDir.resolve("MyTest.java");
     Files.write(
         fooJavaFile,
         "import com.acme.util.Bar; class Foo {private var bar = new Bar();}".getBytes());
     Files.write(barJavaFile, "public class Bar {}".getBytes());
+    Files.write(testFile, "public class MyTest {}".getBytes());
 
     /*
      * Only add module2 to the discovered source directories. This will help prove that the module1 files can still be seen and changed, even if we couldn't locate it as a "source directory".
@@ -55,6 +62,30 @@ final class CLITest {
             SourceDirectory.createDefault(
                 tmpDir.resolve("module2/src/main/java").toAbsolutePath(),
                 List.of(barJavaFile.toAbsolutePath().toString())));
+  }
+
+  @Test
+  void it_works_normally() throws IOException {
+    Path outputFile = Files.createTempFile("codetf", ".json");
+    String[] args =
+        new String[] {"--dont-exit", "--output", outputFile.toString(), workingRepoDir.toString()};
+    Runner.run(List.of(Cloud9Changer.class), args);
+    assertThat(Files.readString(fooJavaFile)).contains("cloud9");
+    assertThat(Files.exists(outputFile)).isTrue();
+  }
+
+  @Test
+  void it_doesnt_change_test_file() throws IOException {
+    String[] args = new String[] {"--dont-exit", workingRepoDir.toString()};
+    Runner.run(List.of(Cloud9Changer.class), args);
+    assertThat(Files.readString(testFile)).doesNotContain("cloud9");
+  }
+
+  @Test
+  void it_works_without_output_file() throws IOException {
+    String[] args = new String[] {"--dont-exit", workingRepoDir.toString()};
+    Runner.run(List.of(Cloud9Changer.class), args);
+    assertThat(Files.readString(fooJavaFile)).contains("cloud9");
   }
 
   /**
@@ -75,8 +106,36 @@ final class CLITest {
   }
 
   @Test
-  void dry_run_works() throws IOException {
+  void structured_appender_works_with_project_name() throws IOException {
+    Path outputFile = Files.createTempFile("codemodder", ".out");
+    writeLogMessageToFile(outputFile, "cloud9");
+    String output = Files.readString(outputFile);
+    assertThat(output).contains("\"project_name\":\"cloud9\"");
+  }
 
+  @Test
+  void structured_appender_works_without_project_name() throws IOException {
+    Path outputFile = Files.createTempFile("codemodder", ".out");
+    writeLogMessageToFile(outputFile, null);
+    String output = Files.readString(outputFile);
+    assertThat(output).doesNotContain("cloud9");
+  }
+
+  private static void writeLogMessageToFile(final Path outputFile, final String projectName) {
+    LoggerContext context = new LoggerContext();
+    FileAppender<ILoggingEvent> appender = new FileAppender<>();
+    appender.setContext(context);
+
+    appender.setFile(outputFile.toAbsolutePath().toString());
+    appender.setImmediateFlush(true);
+    CLI.configureAppender(appender, Optional.ofNullable(projectName));
+    Logger log = context.getLogger("myRootLogger");
+    log.addAppender(appender);
+    log.info("this is a test");
+  }
+
+  @Test
+  void dry_run_works() throws IOException {
     Path normalCodetf = Files.createTempFile("normal", ".codetf");
     Path dryRunCodetf = Files.createTempFile("dryrun", ".codetf");
 
@@ -154,7 +213,7 @@ final class CLITest {
 
     IncludesExcludes all = IncludesExcludes.any();
     List<Path> files = finder.findFiles(workingRepoDir, all);
-    assertThat(files).containsExactly(fooJavaFile, barJavaFile);
+    assertThat(files).containsExactly(fooJavaFile, barJavaFile, testFile);
 
     IncludesExcludes onlyFoo =
         IncludesExcludes.withSettings(workingRepoDir.toFile(), List.of("**/Foo.java"), List.of());
@@ -163,7 +222,10 @@ final class CLITest {
   }
 
   /** This codemod just replaces Java file contents with the word "cloud9" */
-  @Codemod(id = "org:java/cloud9", reviewGuidance = ReviewGuidance.MERGE_AFTER_REVIEW)
+  @Codemod(
+      id = "org:java/cloud9",
+      reviewGuidance = ReviewGuidance.MERGE_AFTER_REVIEW,
+      importance = Importance.LOW)
   private static class Cloud9Changer extends RawFileChanger {
     private Cloud9Changer() {
       super(UselessReportStrategy.INSTANCE);

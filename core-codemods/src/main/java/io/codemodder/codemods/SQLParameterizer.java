@@ -15,7 +15,6 @@ import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.VariableDeclarationExpr;
 import com.github.javaparser.ast.stmt.ExpressionStmt;
-import com.github.javaparser.resolution.UnsolvedSymbolException;
 import io.codemodder.Either;
 import io.codemodder.ast.ASTTransforms;
 import io.codemodder.ast.ASTs;
@@ -30,8 +29,11 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.javatuples.Pair;
 
-/** Contains most of the logic for the SQLParameterizerCodemod. */
-final class SQLParameterizer {
+/**
+ * Contains most of the logic for detecting and fixing parameterizable SQL statements for a given
+ * {@link MethodCallExpr}.
+ */
+public final class SQLParameterizer {
 
   private static final String preparedStatementNamePrefix = "stmt";
   private static final String preparedStatementNamePrefixAlternative = "statement";
@@ -40,7 +42,7 @@ final class SQLParameterizer {
 
   private CompilationUnit compilationUnit;
 
-  SQLParameterizer(final MethodCallExpr methodCallExpr) {
+  public SQLParameterizer(final MethodCallExpr methodCallExpr) {
     this.executeCall = Objects.requireNonNull(methodCallExpr);
     this.compilationUnit = null;
   }
@@ -64,7 +66,15 @@ final class SQLParameterizer {
       final Predicate<MethodCallExpr> hasScopeSQLStatement =
           n ->
               n.getScope()
-                  .filter(s -> s.calculateResolvedType().describe().equals("java.sql.Statement"))
+                  .filter(
+                      s -> {
+                        try {
+                          String resolvedType = s.calculateResolvedType().describe();
+                          return "java.sql.Statement".equals(resolvedType);
+                        } catch (RuntimeException e) {
+                          return false;
+                        }
+                      })
                   .isPresent();
 
       final Predicate<MethodCallExpr> isFirstArgumentNotSLE =
@@ -76,14 +86,20 @@ final class SQLParameterizer {
       return rule1.test(methodCallExpr);
 
       // Thrown by the JavaParser Symbol Solver when it can't resolve types
-    } catch (UnsolvedSymbolException | UnsupportedOperationException e) {
+    } catch (RuntimeException e) {
       return false;
     }
   }
 
   private Optional<MethodCallExpr> isConnectionCreateStatement(final Expression expr) {
     final Predicate<Expression> isConnection =
-        e -> e.calculateResolvedType().describe().equals("java.sql.Connection");
+        e -> {
+          try {
+            return "java.sql.Connection".equals(e.calculateResolvedType().describe());
+          } catch (RuntimeException ex) {
+            return false;
+          }
+        };
     return Optional.of(expr)
         .map(e -> e instanceof MethodCallExpr ? expr.asMethodCallExpr() : null)
         .filter(
@@ -329,7 +345,7 @@ final class SQLParameterizer {
     Expression combined = it.next();
     boolean atLeastOneString = false;
     try {
-      atLeastOneString = combined.calculateResolvedType().describe().equals("java.lang.String");
+      atLeastOneString = "java.lang.String".equals(combined.calculateResolvedType().describe());
     } catch (final Exception ignored) {
     }
     root = collapse(combined, root);
@@ -338,8 +354,7 @@ final class SQLParameterizer {
       final var expr = it.next();
       try {
         if (!atLeastOneString
-            && expr.calculateResolvedType().describe().equals("java.lang.String")) {
-
+            && "java.lang.String".equals(expr.calculateResolvedType().describe())) {
           atLeastOneString = true;
         }
       } catch (final Exception ignored) {
@@ -488,7 +503,7 @@ final class SQLParameterizer {
    * Checks if {@code methodCall} is a query call that needs to be fixed and fixes if that's the
    * case.
    */
-  boolean checkAndFix() {
+  public boolean checkAndFix() {
 
     if (executeCall.findCompilationUnit().isPresent()) {
       this.compilationUnit = executeCall.findCompilationUnit().get();
